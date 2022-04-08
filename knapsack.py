@@ -9,7 +9,7 @@ from itertools import product
 import numpy as np
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
-from qiskit import Aer, transpile
+from qiskit import Aer, transpile, execute
 from qiskit.circuit import Parameter
 from qiskit.visualization import plot_histogram
 
@@ -233,7 +233,7 @@ def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit, varia
     # bind parameters of the circuit
     bound_circuit = transpiled_circuit.bind_parameters(parameter_dict)
     # run simulation
-    job = backend.run(bound_circuit, shots=shots)
+    job = execute(bound_circuit, backend, shots=shots)
     result = job.result()
     counts = result.get_counts()
     return counts
