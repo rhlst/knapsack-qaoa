@@ -256,6 +256,22 @@ def get_noise_params(noise_backend):
     
     return noise_params
 
+def approximation_ratio(counts, best_known_solutions):
+    """
+    Calculates the approximation ratio of a solution.
+    
+    Here the approximation ratio refers to the percentage of sampled bitstrings
+    that are one of the best known solutions. This is based on the definition
+    given in Roch et al.: "Cross Entropy Hyperparameter Optimization for
+    Constrained Problem Hamiltonians Applied to QAOA". This definition differs
+    from the one given in Hadfield: "Quantum Algorithms for Scientific
+    Computing and Approximate Optimization".
+    """
+    num_total_counts = sum(counts.values())
+    best_counts = {k: v for k, v in counts.items() if k in best_known_solutions}
+    num_best_counts = sum(best_counts.values())
+    return num_best_counts / num_total_counts
+
 ##############################################################################
 # Examples
 ##############################################################################
@@ -280,6 +296,12 @@ def example1():
     choices = qaoa.counts_to_choices(counts)
     plot_histogram(choices)
     plt.show()
+    
+    # Calculate and print the approximation ratio
+    print(f"Approximation Ratio: {approximation_ratio(choices, ['10',]):.2f}")
+    # Note that the approximation ratio is not taken with regard to counts, but
+    # to choices, which is not correct. This is simply done to test its
+    # working.
     
 def example2():
     # define problem
@@ -348,7 +370,7 @@ def noise_example():
     
 
 def main():
-    noise_example()
+    example1()
 
 if __name__ == "__main__":
     main()
