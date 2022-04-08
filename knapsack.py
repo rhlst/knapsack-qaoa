@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''An empty Python file'''
 
 from dataclasses import dataclass, field
 from functools import partial
