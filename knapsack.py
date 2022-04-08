@@ -9,7 +9,8 @@ from itertools import product
 import numpy as np
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
-from qiskit import Aer, transpile, execute
+from qiskit import IBMQ, Aer, transpile, execute
+from qiskit.providers.aer.noise import NoiseModel
 from qiskit.circuit import Parameter
 from qiskit.visualization import plot_histogram
 
@@ -221,7 +222,9 @@ def average(counts: dict, objective_func):
         sum_count += count
     return avg/sum_count
 
-def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit, variable_parameters: list, fixed_parameters: dict = None, backend = Aer.get_backend("aer_simulator"), shots=512):
+def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit,
+                     variable_parameters: list, fixed_parameters: dict = None,
+                     backend = None, shots = 512, **kwargs):
     # ensure this is a valid dict
     if fixed_parameters is None:
         fixed_parameters = {}
@@ -232,13 +235,27 @@ def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit, varia
     }
     # bind parameters of the circuit
     bound_circuit = transpiled_circuit.bind_parameters(parameter_dict)
+
     # run simulation
-    job = execute(bound_circuit, backend, shots=shots)
+    job = execute(bound_circuit, backend, shots=shots, **kwargs)
     result = job.result()
     counts = result.get_counts()
     return counts
 
-
+def get_noise_params(noise_backend):
+    # Get necessary data for noise simulation from the backend
+    noise_model = NoiseModel.from_backend(noise_backend)
+    coupling_map = noise_backend.configuration().coupling_map
+    basis_gates = noise_model.basis_gates
+    
+    # create parameter dict
+    noise_params = {
+        "noise_model": noise_model,
+        "coupling_map": coupling_map,
+        "basis_gates": basis_gates,
+    }
+    
+    return noise_params
 
 ##############################################################################
 # Examples
@@ -246,14 +263,18 @@ def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit, varia
 
 def example1():
     # define problem
-    simple_problem = KnapsackProblem(values=[1, 2], weights=[2, 2], max_weight=2)
+    simple_problem = KnapsackProblem(values=[1, 2], weights=[2, 2],
+                                     max_weight=2)
     # create QAOA circuit
     qaoa = QuadQAOA(simple_problem, p=1)
     backend = Aer.get_backend("aer_simulator")
     transpiled_circuit = transpile(qaoa.circuit, backend)
     sim = partial(simulate_circuit,
                   transpiled_circuit = transpiled_circuit,
-                  variable_parameters = [*qaoa.circuit.betas, *qaoa.circuit.gammas, qaoa.circuit.A, qaoa.circuit.B],
+                  variable_parameters = [*qaoa.circuit.betas,
+                                         *qaoa.circuit.gammas,
+                                         qaoa.circuit.A,
+                                         qaoa.circuit.B],
                   backend = backend)
     param_vals = np.array([2.20803269, 1.66682401, 2.7, 1.1])
     counts = sim(param_vals)
@@ -263,7 +284,8 @@ def example1():
     
 def example2():
     # define problem
-    simple_problem = KnapsackProblem(values=[1, 2], weights=[2, 2], max_weight=2)
+    simple_problem = KnapsackProblem(values=[1, 2], weights=[2, 2],
+                                     max_weight=2)
     qaoa = QuadQAOA(simple_problem, p=1)
     backend = Aer.get_backend("aer_simulator")
     transpiled_circuit = transpile(qaoa.circuit, backend)
@@ -271,7 +293,8 @@ def example2():
     B = 1.1
     sim = partial(simulate_circuit,
                   transpiled_circuit = transpiled_circuit,
-                  variable_parameters = [*qaoa.circuit.betas, *qaoa.circuit.gammas],
+                  variable_parameters = [*qaoa.circuit.betas,
+                                         *qaoa.circuit.gammas],
                   fixed_parameters = {qaoa.circuit.A: A, qaoa.circuit.B: B},
                   backend = backend)
     objective_func = partial(qaoa.objective_func, A=A, B=B)
@@ -288,10 +311,45 @@ def example2():
     reshaped = np.transpose(np.reshape(avgs, (n, n)))
     plt.imshow(reshaped, interpolation="bilinear", origin="lower")
     plt.show()
+
+def noise_example():
+    # Get credentials for IBMQ
+    provider = IBMQ.load_account()
+    # Get IBM Quito as backend to base our noise simulation on
+    noise_backend = provider.get_backend('ibmq_quito')
+    # Get necessary parameters for noise simulation
+    noise_params = get_noise_params(noise_backend)
+
+    # define problem
+    simple_problem = KnapsackProblem(values=[1, 2], weights=[2, 2],
+                                     max_weight=2)
+    # create QAOA object for this problem
+    qaoa = QuadQAOA(simple_problem, p=1)
+    # Use the Aer simulator as backend for simulation
+    sim_backend = Aer.get_backend("aer_simulator")
+    # Transpile circuit to this backend
+    transpiled_circuit = transpile(qaoa.circuit, sim_backend)
+    
+    # Define simulation function for this problem
+    sim = partial(simulate_circuit,
+                  transpiled_circuit = transpiled_circuit,
+                  variable_parameters = [*qaoa.circuit.betas,
+                                         *qaoa.circuit.gammas,
+                                         qaoa.circuit.A,
+                                         qaoa.circuit.B],
+                  backend = sim_backend, **noise_params)
+    
+    # Define toy parameter values to use
+    param_vals = np.array([2.20803269, 1.66682401, 2.7, 1.1])
+    # Run the simulation
+    counts = sim(param_vals)
+    choices = qaoa.counts_to_choices(counts)
+    plot_histogram(choices)
+    plt.show()
     
 
 def main():
-    example1()
+    noise_example()
 
 if __name__ == "__main__":
     main()
