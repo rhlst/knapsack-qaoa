@@ -4,6 +4,7 @@
 from dataclasses import dataclass, field
 from functools import partial
 from itertools import product
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -192,6 +193,303 @@ class QuadQAOA():
 ##############################################################################
 # Soft Constraint: Linear Penalty
 ##############################################################################
+
+class KAdder(QuantumCircuit):
+    """QuantumCircuit to add $2^k$ to an n-qubit register."""
+    
+    def __init__(self, n, k, controlled = False, uncompute = False):
+        # Create registers
+        main = QuantumRegister(n, name="main")
+        carry = QuantumRegister(n-1, name="carry")
+        if controlled:
+            control = QuantumRegister(1, name="control")
+            registers = [control, main, carry]
+        else:
+            registers = [main, carry]
+        
+        # Create QuantumCircuit
+        name = f"Uncompute Add {2**k}" if uncompute else f"Add {2**k}"
+        super().__init__(*registers, name=name)
+        
+        # Build circuit
+        if uncompute:
+            self.build_uncompute(n, k, controlled, registers)
+        else:
+            self.build_regular(n, k, controlled, registers)
+        
+    def build_regular(self, n, k, controlled, registers):
+        if controlled:
+            control, main, carry = registers
+        else:
+            main, carry = registers
+        
+        # Build circuit in regular order
+        if controlled:
+            super().ccx(control, main[k], carry[k])
+        else:
+            super().cx(main[k], carry[k])
+        
+        for j in range(k+1, n-1):
+            super().ccx(main[j], carry[j-1], carry[j])
+
+        super().cx(carry[n-2], main[n-1])
+
+        for j in reversed(range(k+1, n-1)):
+            super().ccx(main[j], carry[j-1], carry[j])
+            super().cx(carry[j-1], main[j])
+        
+        if controlled:
+            super().ccx(control, main[k], carry[k])
+            super().cx(control, main[k])
+        else:
+            super().cx(main[k], carry[k])
+            super().x(main[k])
+    
+    def build_uncompute(self, n, k, controlled, registers):
+        if controlled:
+            control, main, carry = registers
+        else:
+            main, carry = registers
+        
+        # Build circuit in reverse order for uncomputing
+        if controlled:
+            super().cx(control, main[k])
+            super().ccx(control, main[k], carry[k])
+        else:
+            super().x(main[k])
+            super().cx(main[k], carry[k])
+        
+        for j in range(k+1, n-1):
+            super().cx(carry[j-1], main[j])
+            super().ccx(main[j], carry[j-1], carry[j])
+
+        super().cx(carry[n-2], main[n-1])
+
+        for j in reversed(range(k+1, n-1)):
+            super().ccx(main[j], carry[j-1], carry[j])
+
+        if controlled:
+            super().ccx(control, main[k], carry[k])
+        else:
+            super().cx(main[k], carry[k])
+
+
+class Adder(QuantumCircuit):
+    """Quantum Circuit to add integer x to a n-qubit register
+    
+    Assumes that x can be represented in n bits."""
+    
+    def __init__(self, n, x, controlled = False, uncompute = False):
+        # Create registers
+        main = QuantumRegister(n, name="main")
+        carry = QuantumRegister(n-1, name="carry")
+        if controlled:
+            control = QuantumRegister(1, name="control")
+            registers = [control, main, carry]
+            qubits = [control, *main, *carry]
+        else:
+            registers = [main, carry]
+            qubits = [*main, *carry]
+        
+        # Create QuantumCircuit
+        name = f"Uncompute Add {x}" if uncompute else f"Add {x}"
+        super().__init__(*registers, name=name)
+        
+        # Build circuit
+        if uncompute:
+            self.build_uncompute(n, x, controlled, qubits)
+        else:
+            self.build_regular(n, x, controlled, qubits)
+            
+    def build_regular(self, n, x, controlled, qubits):
+        binary = list(map(int, bin(x)[2:]))
+        padded_binary = [0] * (n - len(binary)) + binary
+        for k, x_k in enumerate(reversed(padded_binary)):
+            if x_k:
+                kadder = KAdder(n, k, controlled=controlled)
+                super().append(kadder.to_instruction(), qubits)
+                
+    def build_uncompute(self, n, x, controlled, qubits):
+        binary = list(map(int, bin(x)[2:]))
+        padded_binary = [0] * (n - len(binary)) + binary
+        for k, x_k in reversed(list(enumerate(reversed(padded_binary)))):
+            if x_k:
+                kadder = KAdder(n, k, controlled=controlled, uncompute=True)
+                super().append(kadder.to_instruction(), qubits)
+
+
+class WeightCalculator(QuantumCircuit):
+    """QuantumCircuit to calculate the weight of a certain choice of items"""
+    
+    def __init__(self, n, weights, uncompute = False):
+        N = len(weights)
+
+        qchoices = QuantumRegister(N, name="choices")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        registers = [qchoices, qweight, qcarry]
+
+        name = "Uncompute Calculate Weight" if uncompute else "Calculate Weight" 
+        super().__init__(*registers, name=name)
+        
+        if uncompute:
+            self.build_uncompute(n, weights, *registers)
+        else:
+            self.build_regular(n, weights, *registers)  
+        
+    def build_regular(self, n, weights, qchoices, qweight, qcarry):
+        for qubit, weight in zip(qchoices, weights):
+            adder = Adder(n, weight, controlled=True)
+            super().append(adder.to_instruction(), [qubit, *qweight, *qcarry])
+    
+    def build_uncompute(self, n, weights, qchoices, qweight, qcarry):
+        for qubit, weight in reversed(list(zip(qchoices, weights))):
+            adder = Adder(n, weight, controlled=True, uncompute=True)
+            super().append(adder.to_instruction(), [qubit, *qweight, *qcarry])
+
+
+class LTChecker(QuantumCircuit):
+    """QuantumCircuit to toggle flag qubit if (weight < 2^c)
+    
+    Assume c < n."""
+
+    def __init__(self, n, c, uncompute=False):
+        qweight = QuantumRegister(n,  name="weight")
+        qflag = QuantumRegister(1, name="flag")
+
+        if c <= n - 3:
+            qtest = QuantumRegister(n - c - 2, name="test")
+            registers = [qweight, qtest, qflag]
+        else:
+            registers = [qweight, qflag]
+
+        name = f"Uncompute Check < {2**c}" if uncompute else f"Check < {2**c}"
+        super().__init__(*registers, name=name)
+        
+        if uncompute:
+            self.build_uncompute(n, c, registers)
+        else:
+            self.build_regular(n, c, registers)
+        
+    def build_regular(self, n, c, registers):
+        if c <= n - 3:
+            qweight, qtest, qflag = registers
+        else:
+            qweight, qflag = registers
+        
+        super().x(qweight[c:])
+
+        if c == n - 1:
+            super().cx(qweight[c], qflag)
+        elif c == n - 2:
+            super().ccx(qweight[c], qweight[c+1], qflag)
+        elif c <= n - 3:
+            super().ccx(qweight[c], qweight[c+1], qtest[0])
+
+            for k in range(n - c - 3):
+                super().ccx(qweight[c+2+k], qtest[k], qtest[k+1])
+
+            super().ccx(qweight[n - 1], qtest[n - c - 3], qflag)
+            
+    def build_uncompute(self, n, c, registers):
+        if c <= n - 3:
+            qweight, qtest, qflag = registers
+        else:
+            qweight, qflag = registers
+            
+        if c == n - 1:
+            super().cx(qweight[c], qflag)
+        elif c == n - 2:
+            super().ccx(qweight[c], qweight[c+1], qflag)
+        elif c <= n - 3:
+            super().ccx(qweight[n - 1], qtest[n - c - 3], qflag)
+            
+            for k in reversed(range(n - c - 3)):
+                super().ccx(qweight[c+2+k], qtest[k], qtest[k+1])
+
+            super().ccx(qweight[c], qweight[c+1], qtest[0])
+        
+        super().barrier()
+        super().x(qweight[c:])
+
+
+class PenaltyDephaser(QuantumCircuit):
+    """QuantumCircuit for penalty dephasing"""
+    
+    def __init__(self, n, c):
+        qweight = QuantumRegister(n, name="weight")
+        qflag = QuantumRegister(1, name="flag")
+        
+        super().__init__(qweight, qflag, name="Dephase Penalty")
+
+        self.alpha = Parameter("alpha")
+        self.gamma = Parameter("gamma")
+        
+        for idx, qubit in enumerate(qweight):
+            super().cp(2**idx * self.alpha * self.gamma, qflag, qubit)
+    
+        super().p(-2**c * self.alpha * self.gamma, qflag)
+
+
+class ValueDephaser(QuantumCircuit):
+    """QuantumCircuit to dephase value"""
+    
+    def __init__(self, values):
+        N = len(values)
+        qchoices = QuantumRegister(N)
+        super().__init__(qchoices, name="Dephase Value")
+        self.gamma = Parameter("gamma")
+        for qubit, value in zip(qchoices, values):
+            super().p(- self.gamma * value, qubit)
+
+
+class LinPhaseCirc(QuantumCircuit):
+    """Phase seperation Circuit for linear penalty"""
+
+    def __init__(self, problem: KnapsackProblem):
+        N = len(problem.weights)
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+        w0 = 2**c - problem.max_weight - 1
+
+        qchoices = QuantumRegister(N, name="choices")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag = QuantumRegister(1, name="flag")
+
+        has_test_register = (c <= n - 3)
+        if has_test_register:
+            qtest = QuantumRegister(n - c - 2, name="test")
+            registers = [qchoices, qweight, qcarry, qtest, qflag]
+            ltqubits = [*qweight, *qtest, qflag]
+        else:
+            registers = [qchoices, qweight, qcarry, qflag]
+            ltqubits = [*qweight, qflag]
+
+        super().__init__(*registers, name="UPhase")
+
+        self.alpha = Parameter("alpha")
+        self.gamma = Parameter("gamma")
+
+        super().x(qflag)
+
+        valuecirc = ValueDephaser(problem.values)
+        value_instruction = valuecirc.to_instruction({valuecirc.gamma: gamma})
+        super().append(value_instruction, qchoices)
+
+        super().append(WeightCalculator(n, problem.weights).to_instruction(), [*qchoices, *qweight, *qcarry])
+        super().append(Adder(n, w0).to_instruction(), [*qweight, *qcarry])
+        super().append(LTChecker(n, c).to_instruction(), ltqubits)
+
+        penaltycirc = PenaltyDephaser(n, c)
+        penalty_instruction = penaltycirc.to_instruction({penaltycirc.alpha: alpha, penaltycirc.gamma: gamma})
+        super().append(penalty_instruction, [*qweight, qflag])
+
+        super().append(LTChecker(n, c, uncompute=True).to_instruction(), ltqubits)
+        super().append(Adder(n, w0, uncompute=True).to_instruction(), [*qweight, *qcarry])
+        super().append(WeightCalculator(n, problem.weights, uncompute=True).to_instruction(), [*qchoices, *qweight, *qcarry])
 
 
 ##############################################################################
