@@ -224,6 +224,14 @@ class KAdder(QuantumCircuit):
             main, carry = registers
         
         # Build circuit in regular order
+        # take care of special case
+        if k == n-1:
+            if controlled:
+                super().cx(control, main[k])
+            else:
+                super().x(main[k])
+            return
+        
         if controlled:
             super().ccx(control, main[k], carry[k])
         else:
@@ -252,6 +260,14 @@ class KAdder(QuantumCircuit):
             main, carry = registers
         
         # Build circuit in reverse order for uncomputing
+        # take care of special case
+        if k == n-1:
+            if controlled:
+                super().cx(control, main[k])
+            else:
+                super().x(main[k])
+            return
+        
         if controlled:
             super().cx(control, main[k])
             super().ccx(control, main[k], carry[k])
@@ -476,7 +492,7 @@ class LinPhaseCirc(QuantumCircuit):
         super().x(qflag)
 
         valuecirc = ValueDephaser(problem.values)
-        value_instruction = valuecirc.to_instruction({valuecirc.gamma: gamma})
+        value_instruction = valuecirc.to_instruction({valuecirc.gamma: self.gamma})
         super().append(value_instruction, qchoices)
 
         super().append(WeightCalculator(n, problem.weights).to_instruction(), [*qchoices, *qweight, *qcarry])
@@ -484,13 +500,94 @@ class LinPhaseCirc(QuantumCircuit):
         super().append(LTChecker(n, c).to_instruction(), ltqubits)
 
         penaltycirc = PenaltyDephaser(n, c)
-        penalty_instruction = penaltycirc.to_instruction({penaltycirc.alpha: alpha, penaltycirc.gamma: gamma})
+        penalty_instruction = penaltycirc.to_instruction({penaltycirc.alpha: self.alpha, penaltycirc.gamma: self.gamma})
         super().append(penalty_instruction, [*qweight, qflag])
 
         super().append(LTChecker(n, c, uncompute=True).to_instruction(), ltqubits)
         super().append(Adder(n, w0, uncompute=True).to_instruction(), [*qweight, *qcarry])
         super().append(WeightCalculator(n, problem.weights, uncompute=True).to_instruction(), [*qchoices, *qweight, *qcarry])
 
+
+class LinMixCirc(QuantumCircuit):
+    """Mixer circuit for Knapsack QAOA with linear soft constraints."""
+    
+    def __init__(self, problem: KnapsackProblem):
+        N = len(problem.weights)
+        # create registers
+        q = QuantumRegister(N)
+        # create circuit
+        super().__init__(q, name="UMix")
+        
+        # parameters for this circuit
+        self.beta = Parameter("beta")
+        
+        # x-rotation of all qubits
+        super().rx(2 * self.beta, q)
+
+
+class LinQAOACirc(QuantumCircuit):
+    """
+    QAOA Circuit for Knapsack Problem with quadratic soft constraints.
+    """
+    
+    def __init__(self, problem: KnapsackProblem, p: int):
+        N = len(problem.weights)
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qchoices = QuantumRegister(N, name="choices")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag = QuantumRegister(1, name="flag")
+
+        has_test_register = (c <= n - 3)
+        if has_test_register:
+            qtest = QuantumRegister(n - c - 2, name="test")
+            registers = [qchoices, qweight, qcarry, qtest, qflag]
+            qubits = [*qchoices, *qweight, *qcarry, *qtest, qflag]
+        else:
+            registers = [qchoices, qweight, qcarry, qflag]
+            qubits = [*qchoices, *qweight, *qcarry, qflag]
+
+        super().__init__(*registers, name="LinQAOA")
+
+        # Phase seperation circuit
+        phase_circ = LinPhaseCirc(problem)
+        # Mixing circuit
+        mix_circ = LinMixCirc(problem)
+        
+        # Implementation of QAOA Circuit
+        self.p = p
+
+        self.betas = [Parameter(f"beta{i}") for i in range(p)]
+        self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
+        
+        self.alpha = Parameter("alpha")
+
+        # initialize
+        super().h(qchoices)
+
+        # alternating application of phase seperation and mixing unitaries
+        for gamma, beta in zip(self.gammas, self.betas):
+            # application of phase seperation unitary
+            phase_params = {
+                phase_circ.gamma: gamma,
+                phase_circ.alpha: self.alpha,
+            }
+            phase_instruction = phase_circ.to_instruction(phase_params)
+            super().append(phase_instruction, qubits)
+            
+            # application of mixing unitary
+            mix_params = {
+                mix_circ.beta: beta,
+            }
+            mix_instruction = mix_circ.to_instruction(mix_params)
+            super().append(mix_instruction, qchoices)
+
+        # measurement
+        super().measure_all()
 
 ##############################################################################
 # Hard Constraint: Random Walk
