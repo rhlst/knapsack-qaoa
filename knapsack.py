@@ -463,14 +463,13 @@ class LinPhaseCirc(QuantumCircuit):
     """Phase seperation Circuit for linear penalty"""
 
     def __init__(self, problem: KnapsackProblem):
-        N = len(problem.weights)
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
             n += 1
         w0 = 2**c - problem.max_weight - 1
 
-        qchoices = QuantumRegister(N, name="choices")
+        qchoices = QuantumRegister(problem.N, name="choices")
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
@@ -512,9 +511,8 @@ class LinMixCirc(QuantumCircuit):
     """Mixer circuit for Knapsack QAOA with linear soft constraints."""
     
     def __init__(self, problem: KnapsackProblem):
-        N = len(problem.weights)
         # create registers
-        q = QuantumRegister(N)
+        q = QuantumRegister(problem.N)
         # create circuit
         super().__init__(q, name="UMix")
         
@@ -531,13 +529,12 @@ class LinQAOACirc(QuantumCircuit):
     """
     
     def __init__(self, problem: KnapsackProblem, p: int):
-        N = len(problem.weights)
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
             n += 1
 
-        qchoices = QuantumRegister(N, name="choices")
+        qchoices = QuantumRegister(problem.N, name="choices")
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
@@ -597,9 +594,8 @@ class LinQAOA():
         
     def objective_func(self, bitstring: str, alpha: float):
         """Computes an objective function for the knapsack problem with linear soft constraints."""
-        N = len(self.problem.weights)
         bits = np.array(list(map(int, list(bitstring))))[::-1]
-        choices = np.array(bits[:N])
+        choices = np.array(bits[:self.problem.N])
         weight = choices.dot(self.problem.weights)
         penalty = - alpha * (weight - self.problem.max_weight) if weight > self.problem.max_weight else 0
         value = choices.dot(self.problem.values)
