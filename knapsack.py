@@ -589,6 +589,23 @@ class LinQAOACirc(QuantumCircuit):
         # measurement
         super().measure_all()
 
+
+class LinQAOA():
+    def __init__(self, problem: KnapsackProblem, p: int):
+        self.problem = problem
+        self.circuit = LinQAOACirc(problem, p)
+        
+    def objective_func(self, bitstring: str, alpha: float):
+        """Computes an objective function for the knapsack problem with linear soft constraints."""
+        N = len(self.problem.weights)
+        bits = np.array(list(map(int, list(bitstring))))[::-1]
+        choices = np.array(bits[:N])
+        weight = choices.dot(self.problem.weights)
+        penalty = - alpha * (weight - self.problem.max_weight) if weight > self.problem.max_weight else 0
+        value = choices.dot(self.problem.values)
+        return value + penalty
+
+
 ##############################################################################
 # Hard Constraint: Random Walk
 ##############################################################################
