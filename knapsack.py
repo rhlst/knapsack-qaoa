@@ -21,10 +21,10 @@ class KnapsackProblem:
     values: list
     weights: list
     max_weight: int
-    total_weight: int = field(init=False)
         
     def __post_init__(self):
         self.total_weight = sum(self.weights)
+        self.N = len(self.weights)
 
 
 ##############################################################################
