@@ -371,28 +371,19 @@ class LTChecker(QuantumCircuit):
 
     def __init__(self, n, c, uncompute=False):
         qweight = QuantumRegister(n,  name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
-
-        if c <= n - 3:
-            qtest = QuantumRegister(n - c - 2, name="test")
-            registers = [qweight, qtest, qflag]
-        else:
-            registers = [qweight, qflag]
+        registers = [qweight, qcarry, qflag]
 
         name = f"Uncompute Check < {2**c}" if uncompute else f"Check < {2**c}"
         super().__init__(*registers, name=name)
         
         if uncompute:
-            self.build_uncompute(n, c, registers)
+            self.build_uncompute(n, c, *registers)
         else:
-            self.build_regular(n, c, registers)
+            self.build_regular(n, c, *registers)
         
-    def build_regular(self, n, c, registers):
-        if c <= n - 3:
-            qweight, qtest, qflag = registers
-        else:
-            qweight, qflag = registers
-        
+    def build_regular(self, n, c, qweight, qcarry, qflag):
         super().x(qweight[c:])
 
         if c == n - 1:
@@ -400,32 +391,40 @@ class LTChecker(QuantumCircuit):
         elif c == n - 2:
             super().ccx(qweight[c], qweight[c+1], qflag)
         elif c <= n - 3:
-            super().ccx(qweight[c], qweight[c+1], qtest[0])
+            super().ccx(qweight[c], qweight[c+1], qcarry[0])
 
             for k in range(n - c - 3):
-                super().ccx(qweight[c+2+k], qtest[k], qtest[k+1])
+                super().ccx(qweight[c+2+k], qcarry[k], qcarry[k+1])
 
-            super().ccx(qweight[n - 1], qtest[n - c - 3], qflag)
+            super().ccx(qweight[n - 1], qcarry[n - c - 3], qflag)
             
-    def build_uncompute(self, n, c, registers):
-        if c <= n - 3:
-            qweight, qtest, qflag = registers
-        else:
-            qweight, qflag = registers
+            for k in reversed(range(n - c - 3)):
+                super().ccx(qweight[c+2+k], qcarry[k], qcarry[k+1])
             
+            super().ccx(qweight[c], qweight[c+1], qcarry[0])
+        
+        super().x(qweight[c:])
+            
+    def build_uncompute(self, n, c, qweight, qcarry, qflag):    
+        super().x(qweight[c:])
+        
         if c == n - 1:
             super().cx(qweight[c], qflag)
         elif c == n - 2:
             super().ccx(qweight[c], qweight[c+1], qflag)
         elif c <= n - 3:
-            super().ccx(qweight[n - 1], qtest[n - c - 3], qflag)
+            super().ccx(qweight[c], qweight[c+1], qcarry[0])
+
+            for k in range(n - c - 3):
+                super().ccx(qweight[c+2+k], qcarry[k], qcarry[k+1])
+
+            super().ccx(qweight[n - 1], qcarry[n - c - 3], qflag)
             
             for k in reversed(range(n - c - 3)):
-                super().ccx(qweight[c+2+k], qtest[k], qtest[k+1])
-
-            super().ccx(qweight[c], qweight[c+1], qtest[0])
-        
-        super().barrier()
+                super().ccx(qweight[c+2+k], qcarry[k], qcarry[k+1])
+            
+            super().ccx(qweight[c], qweight[c+1], qcarry[0])
+            
         super().x(qweight[c:])
 
 
@@ -473,16 +472,8 @@ class LinPhaseCirc(QuantumCircuit):
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
-
-        has_test_register = (c <= n - 3)
-        if has_test_register:
-            qtest = QuantumRegister(n - c - 2, name="test")
-            registers = [qchoices, qweight, qcarry, qtest, qflag]
-            ltqubits = [*qweight, *qtest, qflag]
-        else:
-            registers = [qchoices, qweight, qcarry, qflag]
-            ltqubits = [*qweight, qflag]
-
+        registers = [qchoices, qweight, qcarry, qflag]
+        
         super().__init__(*registers, name="UPhase")
 
         self.alpha = Parameter("alpha")
@@ -496,13 +487,13 @@ class LinPhaseCirc(QuantumCircuit):
 
         super().append(WeightCalculator(n, problem.weights).to_instruction(), [*qchoices, *qweight, *qcarry])
         super().append(Adder(n, w0).to_instruction(), [*qweight, *qcarry])
-        super().append(LTChecker(n, c).to_instruction(), ltqubits)
+        super().append(LTChecker(n, c).to_instruction(), [*qweight, *qcarry, qflag])
 
         penaltycirc = PenaltyDephaser(n, c)
         penalty_instruction = penaltycirc.to_instruction({penaltycirc.alpha: self.alpha, penaltycirc.gamma: self.gamma})
         super().append(penalty_instruction, [*qweight, qflag])
 
-        super().append(LTChecker(n, c, uncompute=True).to_instruction(), ltqubits)
+        super().append(LTChecker(n, c, uncompute=True).to_instruction(), [*qweight, *qcarry, qflag])
         super().append(Adder(n, w0, uncompute=True).to_instruction(), [*qweight, *qcarry])
         super().append(WeightCalculator(n, problem.weights, uncompute=True).to_instruction(), [*qchoices, *qweight, *qcarry])
 
@@ -538,15 +529,8 @@ class LinQAOACirc(QuantumCircuit):
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
-
-        has_test_register = (c <= n - 3)
-        if has_test_register:
-            qtest = QuantumRegister(n - c - 2, name="test")
-            registers = [qchoices, qweight, qcarry, qtest, qflag]
-            qubits = [*qchoices, *qweight, *qcarry, *qtest, qflag]
-        else:
-            registers = [qchoices, qweight, qcarry, qflag]
-            qubits = [*qchoices, *qweight, *qcarry, qflag]
+        registers = [qchoices, qweight, qcarry, qflag]
+        qubits = [*qchoices, *qweight, *qcarry, qflag]
 
         super().__init__(*registers, name="LinQAOA")
 
