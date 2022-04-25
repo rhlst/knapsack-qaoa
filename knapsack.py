@@ -194,6 +194,7 @@ class QuadQAOA():
 # Soft Constraint: Linear Penalty
 ##############################################################################
 
+
 class KAdder(QuantumCircuit):
     """QuantumCircuit to add $2^k$ to an n-qubit register."""
     
@@ -591,6 +592,214 @@ class LinQAOA():
 ##############################################################################
 
 
+class FeasibilityOracle(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+        w0 = 2**c - problem.max_weight - 1
+
+        qchoices = QuantumRegister(problem.N, name="choices")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag = QuantumRegister(1, name="flag")
+        registers = [qchoices, qweight, qcarry, qflag]
+        
+        super().__init__(*registers, name="FeasibilityOracle")
+        
+        super().append(WeightCalculator(n, problem.weights).to_instruction(), [*qchoices, *qweight, *qcarry])
+        super().append(Adder(n, w0).to_instruction(), [*qweight, *qcarry])
+        super().append(LTChecker(n, c).to_instruction(), [*qweight, *qcarry, qflag])
+        super().append(Adder(n, w0, uncompute=True).to_instruction(), [*qweight, *qcarry])
+        super().append(WeightCalculator(n, problem.weights, uncompute=True).to_instruction(), [*qchoices, *qweight, *qcarry])
+        
+
+class Vj(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem, j: int):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qx = QuantumRegister(problem.N, name="x")
+        qy = QuantumRegister(problem.N, name="y")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag_x = QuantumRegister(1, name="v(x)")
+        qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
+        qflag_both = QuantumRegister(1, name="v_j(x)")
+        
+        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        
+        super().__init__(*registers, name=f"V{j}")
+        
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
+        super().x(qx[j])
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
+        
+        super().ccx(qflag_x, qflag_neighbor, qflag_both)
+        for xqubit, yqubit in zip(qx, qy):
+            super().cx(xqubit, yqubit)
+        
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
+        super().x(qx[j])
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
+
+
+class ExpBetaS(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qx = QuantumRegister(problem.N, name="x")
+        qy = QuantumRegister(problem.N, name="y")
+        qhelper = QuantumRegister(1, name="helper")
+        qflag_both = QuantumRegister(1, name="v_j(x)")
+        
+        registers = [qx, qy, qhelper, qflag_both]
+        
+        super().__init__(*registers, name=f"ExpBetaS")
+        
+        self.beta = Parameter("beta")
+        
+        super().h(qhelper)
+        for xqubit, yqubit in zip(qx, qy):
+            super().cswap(qhelper, xqubit, yqubit)
+        super().crx(self.beta, qflag_both, qhelper)
+        for xqubit, yqubit in zip(qx, qy):
+            super().cswap(qhelper, xqubit, yqubit)
+        super().h(qhelper)
+        
+
+class SingleQubitQuantumWalk(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem, j: int):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qx = QuantumRegister(problem.N, name="x")
+        qy = QuantumRegister(problem.N, name="y")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag_x = QuantumRegister(1, name="v(x)")
+        qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
+        qflag_both = QuantumRegister(1, name="v_j(x)")
+        
+        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        
+        super().__init__(*registers, name=f"SingleQubitQuantumWalk_{j=}")
+        
+        self.beta = Parameter("beta")
+        
+        super().append(Vj(problem, j).to_instruction(), qubits)
+        exp_s = ExpBetaS(problem)
+        super().append(exp_s.to_instruction({exp_s.beta: self.beta}), [*qx, *qy, qflag_x, qflag_both])
+        super().append(Vj(problem, j).to_instruction(), qubits)
+        
+        
+class QuantumWalkMixer(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem, m: int):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qx = QuantumRegister(problem.N, name="x")
+        qy = QuantumRegister(problem.N, name="y")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag_x = QuantumRegister(1, name="v(x)")
+        qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
+        qflag_both = QuantumRegister(1, name="v_j(x)")
+        
+        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        
+        super().__init__(*registers, name=f"QuantumWalkMixer_{m=}")
+        
+        self.beta = Parameter("beta")
+        
+        for __ in range(m):
+            for j in range(problem.N):
+                jwalk = SingleQubitQuantumWalk(problem, j)
+                super().append(jwalk.to_instruction({jwalk.beta: self.beta / m}), qubits)
+                
+                
+class QuantumWalkPhaseCirc(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem):
+        qchoices = QuantumRegister(problem.N, name="choices")
+        super().__init__(qchoices, name="UPhase")
+        self.gamma = Parameter("gamma")
+        
+        valuecirc = ValueDephaser(problem.values)
+        value_instruction = valuecirc.to_instruction({valuecirc.gamma: self.gamma})
+        super().append(value_instruction, qchoices)
+        
+        
+class QuantumWalkQAOACirc(QuantumCircuit):
+    def __init__(self, problem: KnapsackProblem, p: int, m: int):
+        n = math.floor(math.log2(problem.total_weight)) + 1
+        c = math.floor(math.log2(problem.max_weight)) + 1
+        if c == n:
+            n += 1
+
+        qx = QuantumRegister(problem.N, name="x")
+        qy = QuantumRegister(problem.N, name="y")
+        qweight = QuantumRegister(n, name="weight")
+        qcarry = QuantumRegister(n-1, name="carry")
+        qflag_x = QuantumRegister(1, name="v(x)")
+        qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
+        qflag_both = QuantumRegister(1, name="v_j(x)")
+        
+        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        
+        super().__init__(*registers, name=f"QuantumWalkMixer_{m=}")
+        
+        self.p = p
+        
+        self.betas = [Parameter(f"beta{i}") for i in range(p)]
+        self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
+        
+        # Phase seperation circuit
+        phase_circ = QuantumWalkPhaseCirc(problem)
+        # Mixing circuit
+        mix_circ = QuantumWalkMixer(problem, m)
+        
+        # alternating application of phase seperation and mixing unitaries
+        for gamma, beta in zip(self.gammas, self.betas):
+            # application of phase seperation unitary
+            phase_params = {phase_circ.gamma: gamma}
+            phase_instruction = phase_circ.to_instruction(phase_params)
+            super().append(phase_instruction, qx)
+            
+            # application of mixing unitary
+            mix_params = {mix_circ.beta: beta}
+            mix_instruction = mix_circ.to_instruction(mix_params)
+            super().append(mix_instruction, qubits)
+
+        # measurement
+        super().measure_all()
+        
+        
+class QuantumWalkQAOA:
+    def __init__(self, problem: KnapsackProblem, p: int, m:int):
+        self.problem = problem
+        self.circuit = QuantumWalkQAOACirc(problem, p, m)
+        
+    def objective_func(self, bitstring: str):
+        """Computes an objective function for the knapsack problem with hard constraints."""
+        bits = np.array(list(map(int, list(bitstring))))[::-1]
+        choices = np.array(bits[:self.problem.N])
+        value = choices.dot(self.problem.values)
+        return value
+
+
 ##############################################################################
 # Hard Constraint: Heuristic Mixer
 ##############################################################################
@@ -599,6 +808,7 @@ class LinQAOA():
 ##############################################################################
 # Functions
 ##############################################################################
+
 
 def average(counts: dict, objective_func):
     """
