@@ -15,9 +15,30 @@ from qiskit.circuit import Parameter
 from qiskit.visualization import plot_histogram
 
 
+##############################################################################
+# General Auxillary Classes
+##############################################################################
+
 
 @dataclass
 class KnapsackProblem:
+    """
+    Class for representing particular instances of the knapsack problem.
+    
+    Intended only for 0-1 integer knapsack problems, i.e. values and weights
+    are supposed to be of same length and must contain integer values. While
+    it is possible for this class to represent other versions of the knapsack
+    problem, all the other code is written with this specific subtype of the
+    problem in mind and will not work for non-integers.
+    
+    Attributes:
+    values (list): the values of the items (use int values only!)
+    weights (list): the weights of the items (use int weights only!)
+    max_weight (int): the maximum weight (carry capacity) of the knapsack
+    total_weight (int): the sum of all weights
+    N (int): the number of items
+    """
+    
     values: list
     weights: list
     max_weight: int
@@ -28,177 +49,59 @@ class KnapsackProblem:
 
 
 ##############################################################################
-# Soft Constraint: Quadratic Penalty
-##############################################################################
-
-
-class QuadPhaseCirc(QuantumCircuit):
-    """
-    Phase seperation circuit for Knapsack QAOA with quadratic soft constraints.
-    """
-    
-    def __init__(self, problem: KnapsackProblem):
-        # create registers
-        nx, ny = QuadQAOACirc.register_sizes(problem)
-        qx = QuantumRegister(nx)
-        qy = QuantumRegister(ny)
-        # create circuit
-        super().__init__(qx, qy, name="UPhase")
-        
-        # parameters for this circuit
-        self.gamma = Parameter("gamma")
-        self.A = Parameter("A")
-        self.B = Parameter("B")
-
-        # Single-qubit rotations on x register
-        for idx, (value, weight) in enumerate(zip(problem.values, problem.weights)):
-            angle = (self.A / 2 * (problem.total_weight - (problem.max_weight**2 - problem.max_weight) / 2 * weight)
-                        - self.B * value / 2) * self.gamma
-            super().rz(2 * angle, qx[idx])
-
-        # Single-qubit rotations on y register
-        for idx in range(ny):
-            angle = (problem.max_weight / 2 - 1
-                        + (idx+1) * ((problem.max_weight**2 + problem.max_weight) / 4 - problem.total_weight / 2)) * self.gamma
-            super().rz(2 * angle, qy[idx])
-
-        super().barrier()
-
-        # Two-qubit rotations on x register
-        for idx1, weight1 in enumerate(problem.weights):
-            for idx2, weight2 in enumerate(problem.weights[:idx1]):
-                angle = weight1 * weight2 / 2 * self.gamma
-                super().rzz(2 * angle, qx[idx1], qx[idx2])
-
-        # Two-qubit rotations on y register
-        for idx1 in range(ny):
-            for idx2 in range(idx1):
-                angle = (1 + (idx1 + 1) * (idx2 + 1)) / 2 * self.gamma
-                super().rzz(2 * angle, qy[idx1], qy[idx2])
-
-        super().barrier()
-
-        # Common x and y register rotations
-        for (ix, weight), iy in product(enumerate(problem.weights), range(ny)):
-            angle = - (iy + 1) * weight / 2 * self.gamma
-            super().rzz(2 * angle, qx[ix], qy[iy])
-
-
-class QuadMixCirc(QuantumCircuit):
-    """
-    Mixer circuit for Knapsack QAOA with quadratic soft constraints.
-    """
-    
-    def __init__(self, problem: KnapsackProblem):
-        nx, ny = QuadQAOACirc.register_sizes(problem)
-        # create registers
-        q = QuantumRegister(nx+ny)
-        # create circuit
-        super().__init__(q, name="UMix")
-        
-        # parameters for this circuit
-        self.beta = Parameter("beta")
-        
-        # x-rotation of all qubits
-        super().rx(2 * self.beta, q)
-
-    
-class QuadQAOACirc(QuantumCircuit):
-    """
-    QAOA Circuit for Knapsack Problem with quadratic soft constraints.
-    """
-    
-    def __init__(self, problem: KnapsackProblem, p: int):
-        self.nx, self.ny = QuadQAOACirc.register_sizes(problem)
-        qx = QuantumRegister(self.nx, name="qx")
-        qy = QuantumRegister(self.ny, name="qy")
-        qreg = (*qx, *qy)
-
-        # Phase seperation circuit
-        phase_circ = QuadPhaseCirc(problem)
-        # Mixing circuit
-        mix_circ = QuadMixCirc(problem)
-        
-        # Implementation of QAOA Circuit
-        self.p = p
-
-        self.betas = [Parameter(f"beta{i}") for i in range(p)]
-        self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
-        self.A = Parameter("A")
-        self.B = Parameter("B")
-
-        super().__init__(qx, qy)
-
-        # initialize
-        super().h(qreg)
-
-        # alternating application of phase seperation and mixing unitaries
-        for gamma, beta in zip(self.gammas, self.betas):
-            # application of phase seperation unitary
-            phase_params = {
-                phase_circ.gamma: gamma,
-                phase_circ.A: self.A,
-                phase_circ.B: self.B,
-            }
-            phase_instruction = phase_circ.to_instruction(phase_params)
-            super().append(phase_instruction, qreg)
-            
-            # application of mixing unitary
-            mix_params = {
-                mix_circ.beta: beta,
-            }
-            mix_instruction = mix_circ.to_instruction(mix_params)
-            super().append(mix_instruction, qreg)
-
-        # measurement
-        super().measure_all()
-        
-    @staticmethod
-    def register_sizes(problem: KnapsackProblem):
-        # number of bits for x register
-        nx = len(problem.values)
-        # number of bits for y register
-        ny = problem.max_weight
-        return nx, ny
-
-
-class QuadQAOA():
-    def __init__(self, problem: KnapsackProblem, p: int):
-        self.problem = problem
-        self.circuit = QuadQAOACirc(problem, p)
-        
-    def objective_func(self, bitstring: str, A: float, B: float):
-        """
-        Computes an objective function for the knapsack problem with quadratic soft constraints.
-        """
-        bits = np.array(list(map(int, list(bitstring))))[::-1]
-        xbits = np.array(bits[:self.circuit.nx])
-        ybits = np.array(bits[self.circuit.nx:])
-        penalty = (A * (1 - sum(ybits))**2
-                    + A * (np.arange(1, self.circuit.ny+1).dot(ybits) - xbits.dot(self.problem.weights))**2)
-        value = B * xbits.dot(self.problem.values)
-        return penalty - value
-    
-    def counts_to_choices(self, counts):
-        choices = {}
-        for bitstring, count in counts.items():
-            choice = bitstring[self.circuit.ny:]
-            if not choice in choices.keys():
-                choices[choice] = count
-            else:
-                choices[choice] += count
-        return choices
-
-
-##############################################################################
-# Soft Constraint: Linear Penalty
+# Auxillary Circuits
 ##############################################################################
 
 
 class KAdder(QuantumCircuit):
-    """QuantumCircuit to add $2^k$ to an n-qubit register."""
+    """
+    Circuit for adding 2^k to a register.
+    
+    An implementation of an adding circuit described in de la Grand'rive and
+    Hullo: "Knapsack Problem variants of QAOA for battery revenue
+    optimisation" (2019).
+    
+    The circuit takes a quantum register of n qubits storing some binary
+    number and adds 2^k to that number. For this a carry register of size n-1
+    is required. This class also contains a controlled version of the
+    circuit, where the state of a single control qubit decides whether an
+    addition takes place or not, as well as a reversed version of the circuit
+    for uncomputing.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    control: controls the addition (1 qubit, optional)
+    main: the register to which the circuit adds (n qubits)
+    carry: auxillary register necessary for addition (n-1 qubits)
+    
+    Note:
+    The control qubit is only included as part of the registers if
+    controlled == True. Otherwise this circuit is only defined on main and
+    carry registers.
+    """
     
     def __init__(self, n, k, controlled = False, uncompute = False):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        k (int): exponent of the number being added (the circuit adds 2^k)
+        
+        Keyword Arguments:
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (default: False, i.e. no control qubit)
+        uncompute (bool): whether or not you want the reversed version of the
+            circuit for uncomputing (default: False, i.e. regular version of
+            the circuit)
+        
+        Note:
+        The control qubit is only included as part of the registers if
+        controlled == True. Otherwise this circuit is only defined on main and
+        carry registers.
+        """
         # Create registers
         main = QuantumRegister(n, name="main")
         carry = QuantumRegister(n-1, name="carry")
@@ -219,12 +122,26 @@ class KAdder(QuantumCircuit):
             self.build_regular(n, k, controlled, registers)
         
     def build_regular(self, n, k, controlled, registers):
+        """
+        Build the circuit in regular order.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        k (int): exponent of the number being added (the circuit adds 2^k)
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (True means controlled version)
+        registers (list): list of all the registers that the circuit acts on
+        
+        Note:
+        The control qubit is only included as part of the registers if
+        controlled == True. Otherwise this circuit is only defined on main and
+        carry registers.
+        """
         if controlled:
             control, main, carry = registers
         else:
             main, carry = registers
         
-        # Build circuit in regular order
         # take care of special case
         if k == n-1:
             if controlled:
@@ -255,12 +172,26 @@ class KAdder(QuantumCircuit):
             super().x(main[k])
     
     def build_uncompute(self, n, k, controlled, registers):
+        """
+        Build the circuit in reverse order for uncomputing.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        k (int): exponent of the number being added (the circuit adds 2^k)
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (True means controlled version)
+        registers (list): list of all the registers that the circuit acts on
+        
+        Note:
+        The control qubit is only included as part of the registers if
+        controlled == True. Otherwise this circuit is only defined on main and
+        carry registers.
+        """
         if controlled:
             control, main, carry = registers
         else:
             main, carry = registers
         
-        # Build circuit in reverse order for uncomputing
         # take care of special case
         if k == n-1:
             if controlled:
@@ -292,11 +223,55 @@ class KAdder(QuantumCircuit):
 
 
 class Adder(QuantumCircuit):
-    """Quantum Circuit to add integer x to a n-qubit register
+    """
+    Circuit for adding an arbitrary integer to a register.
     
-    Assumes that x can be represented in n bits."""
+    An implementation of an adding circuit described in de la Grand'rive and
+    Hullo: "Knapsack Problem variants of QAOA for battery revenue
+    optimisation" (2019).
+    
+    The circuit takes a quantum register of n qubits storing some binary
+    number and adds some number x to that number. For this a carry register of
+    size n-1 is required. It is assumed that x may be expressed in at most n
+    (qu)bits. If this is not the case, weird things might happen. This class
+    also contains a controlled version of the circuit, where the state of a
+    single control qubit decides whether an addition takes place or not, as
+    well as a reversed version of the circuit for uncomputing.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    control: controls the addition (1 qubit, optional)
+    main: the register to which the circuit adds (n qubits)
+    carry: auxillary register necessary for addition (n-1 qubits)
+    
+    Note:
+    The control qubit is only included as part of the registers if
+    controlled == True. Otherwise this circuit is only defined on main and
+    carry registers.
+    """
     
     def __init__(self, n, x, controlled = False, uncompute = False):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        x (int): the number being added
+        
+        Keyword Arguments:
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (default: False, i.e. no control qubit)
+        uncompute (bool): whether or not you want the reversed version of the
+            circuit for uncomputing (default: False, i.e. regular version of
+            the circuit)
+        
+        Note:
+        The control qubit is only included as part of the registers if
+        controlled == True. Otherwise this circuit is only defined on main and
+        carry registers.
+        """
         # Create registers
         main = QuantumRegister(n, name="main")
         carry = QuantumRegister(n-1, name="carry")
@@ -319,6 +294,16 @@ class Adder(QuantumCircuit):
             self.build_regular(n, x, controlled, qubits)
             
     def build_regular(self, n, x, controlled, qubits):
+        """
+        Build the circuit in regular order.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        x (int): the number being added
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (True means controlled version)
+        qubits (list): list of all the qubits that the circuit acts on
+        """
         binary = list(map(int, bin(x)[2:]))
         padded_binary = [0] * (n - len(binary)) + binary
         for k, x_k in enumerate(reversed(padded_binary)):
@@ -327,6 +312,16 @@ class Adder(QuantumCircuit):
                 super().append(kadder.to_instruction(), qubits)
                 
     def build_uncompute(self, n, x, controlled, qubits):
+        """
+        Build the circuit in reverse order for uncomputing.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        x (int): the number being added
+        controlled (bool): whether or not you want the controlled version of
+            the circuit (True means controlled version)
+        qubits (list): list of all the registers that the circuit acts on
+        """
         binary = list(map(int, bin(x)[2:]))
         padded_binary = [0] * (n - len(binary)) + binary
         for k, x_k in reversed(list(enumerate(reversed(padded_binary)))):
@@ -336,9 +331,43 @@ class Adder(QuantumCircuit):
 
 
 class WeightCalculator(QuantumCircuit):
-    """QuantumCircuit to calculate the weight of a certain choice of items"""
+    """
+    Circuit for calculating the weight of an item choice.
+    
+    An implementation of the weight calculation circuit described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019).
+    
+    The circuit takes a quantum register of N qubits storing some values
+    representing a choice of items. Each item choice qubit controls an
+    Adder circuit, adding the weight associated with that item to a weight
+    register of n qubits. For this a carry register of size n-1 is required.
+    n must be chosen large enough, s.t. the addition can take place without
+    overflows. This class also contains a reversed version of the circuit for
+    uncomputing.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qchoices: the item choices (N qubits)
+    qweight: stores weight of item choice (n qubits)
+    qcarry: carry register for addition (n-1 qubits)
+    """
     
     def __init__(self, n, weights, uncompute = False):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        n (int): the size of the register for storing the weight
+        weights (list): the weights of the items
+        
+        Keyword Arguments:
+        uncompute (bool): whether or not you want the reversed version of the
+            circuit for uncomputing (default: False, i.e. regular version of
+            the circuit)
+        """
         N = len(weights)
 
         qchoices = QuantumRegister(N, name="choices")
@@ -355,11 +384,31 @@ class WeightCalculator(QuantumCircuit):
             self.build_regular(n, weights, *registers)  
         
     def build_regular(self, n, weights, qchoices, qweight, qcarry):
+        """
+        Build the circuit in regular order.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        weights (list): the weights of the items
+        qchoices (QuantumRegister): register for item choices
+        qweight (QuantumRegister): register for storing weight
+        qcarry (QuantumRegister): carry register for addition
+        """
         for qubit, weight in zip(qchoices, weights):
             adder = Adder(n, weight, controlled=True)
             super().append(adder.to_instruction(), [qubit, *qweight, *qcarry])
     
     def build_uncompute(self, n, weights, qchoices, qweight, qcarry):
+        """
+        Build the circuit in reversed order for uncomputing.
+        
+        Arguments:
+        n (int): the size of the register to which this circuit should add
+        weights (list): the weights of the items
+        qchoices (QuantumRegister): register for item choices
+        qweight (QuantumRegister): register for storing weight
+        qcarry (QuantumRegister): carry register for addition
+        """
         for qubit, weight in reversed(list(zip(qchoices, weights))):
             adder = Adder(n, weight, controlled=True, uncompute=True)
             super().append(adder.to_instruction(), [qubit, *qweight, *qcarry])
@@ -427,6 +476,282 @@ class LTChecker(QuantumCircuit):
             super().ccx(qweight[c], qweight[c+1], qcarry[0])
             
         super().x(qweight[c:])
+
+
+##############################################################################
+# Soft Constraint: Quadratic Penalty
+##############################################################################
+
+
+class QuadPhaseCirc(QuantumCircuit):
+    """
+    Phase seperation circuit for Knapsack QAOA with quadratic soft constraints.
+    
+    An implementation of the phase seperation circuit described in Roch et
+    al.: "Cross Entropy Hyperparameter Optimization for Constrained Problem
+    Hamiltonians Applied to QAOA" (2020). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: choice of items
+    qy: one-hot encoding of weight
+    
+    Attributes:
+    gamma (Parameter): phase seperation angle
+    A (Parameter): prefactor of penalty term in the objective function
+    B (Parameter): prefactor of the value term in the objective function
+    """
+    
+    def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
+        # create registers
+        nx, ny = QuadQAOACirc.register_sizes(problem)
+        qx = QuantumRegister(nx)
+        qy = QuantumRegister(ny)
+        # create circuit
+        super().__init__(qx, qy, name="UPhase")
+        
+        # parameters for this circuit
+        self.gamma = Parameter("gamma")
+        self.A = Parameter("A")
+        self.B = Parameter("B")
+
+        # Single-qubit rotations on x register
+        for idx, (value, weight) in enumerate(zip(problem.values, problem.weights)):
+            angle = (self.A / 2 * (problem.total_weight - (problem.max_weight**2 - problem.max_weight) / 2 * weight)
+                        - self.B * value / 2) * self.gamma
+            super().rz(2 * angle, qx[idx])
+
+        # Single-qubit rotations on y register
+        for idx in range(ny):
+            angle = (problem.max_weight / 2 - 1
+                        + (idx+1) * ((problem.max_weight**2 + problem.max_weight) / 4 - problem.total_weight / 2)) * self.gamma
+            super().rz(2 * angle, qy[idx])
+
+        super().barrier()
+
+        # Two-qubit rotations on x register
+        for idx1, weight1 in enumerate(problem.weights):
+            for idx2, weight2 in enumerate(problem.weights[:idx1]):
+                angle = weight1 * weight2 / 2 * self.gamma
+                super().rzz(2 * angle, qx[idx1], qx[idx2])
+
+        # Two-qubit rotations on y register
+        for idx1 in range(ny):
+            for idx2 in range(idx1):
+                angle = (1 + (idx1 + 1) * (idx2 + 1)) / 2 * self.gamma
+                super().rzz(2 * angle, qy[idx1], qy[idx2])
+
+        super().barrier()
+
+        # Common x and y register rotations
+        for (ix, weight), iy in product(enumerate(problem.weights), range(ny)):
+            angle = - (iy + 1) * weight / 2 * self.gamma
+            super().rzz(2 * angle, qx[ix], qy[iy])
+
+
+class QuadMixCirc(QuantumCircuit):
+    """
+    Mixer circuit for Knapsack QAOA with quadratic soft constraints.
+    
+    An implementation of the mixer circuit described in Roch et al.: "Cross
+    Entropy Hyperparameter Optimization for Constrained Problem Hamiltonians
+    Applied to QAOA" (2020). The implementation is generalized to work for all
+    instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    q: all qubits used by the circuit
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    """
+    
+    def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
+        nx, ny = QuadQAOACirc.register_sizes(problem)
+        # create registers
+        q = QuantumRegister(nx+ny)
+        # create circuit
+        super().__init__(q, name="UMix")
+        
+        # parameters for this circuit
+        self.beta = Parameter("beta")
+        
+        # x-rotation of all qubits
+        super().rx(2 * self.beta, q)
+
+    
+class QuadQAOACirc(QuantumCircuit):
+    """
+    QAOA Circuit for Knapsack Problem with quadratic soft constraints.
+    
+    An implementation of the QAOA circuit described in Roch et al.: "Cross
+    Entropy Hyperparameter Optimization for Constrained Problem Hamiltonians
+    Applied to QAOA" (2020). The implementation is generalized to work for all
+    instances of the KnapsackProblem class and arbitrary p.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: choice of items
+    qy: one-hot encoding of weight
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    gamma (Parameter): phase seperation angle
+    A (Parameter): prefactor of penalty term in the objective function
+    B (Parameter): prefactor of the value term in the objective function
+    p (int): the number of times that phase seperation and mixing circuit are
+        supposed to be applied
+    """
+    
+    def __init__(self, problem: KnapsackProblem, p: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        """
+        self.nx, self.ny = QuadQAOACirc.register_sizes(problem)
+        qx = QuantumRegister(self.nx, name="qx")
+        qy = QuantumRegister(self.ny, name="qy")
+        qreg = (*qx, *qy)
+
+        # Phase seperation circuit
+        phase_circ = QuadPhaseCirc(problem)
+        # Mixing circuit
+        mix_circ = QuadMixCirc(problem)
+        
+        # Implementation of QAOA Circuit
+        self.p = p
+
+        self.betas = [Parameter(f"beta{i}") for i in range(p)]
+        self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
+        self.A = Parameter("A")
+        self.B = Parameter("B")
+
+        super().__init__(qx, qy)
+
+        # initialize
+        super().h(qreg)
+
+        # alternating application of phase seperation and mixing unitaries
+        for gamma, beta in zip(self.gammas, self.betas):
+            # application of phase seperation unitary
+            phase_params = {
+                phase_circ.gamma: gamma,
+                phase_circ.A: self.A,
+                phase_circ.B: self.B,
+            }
+            phase_instruction = phase_circ.to_instruction(phase_params)
+            super().append(phase_instruction, qreg)
+            
+            # application of mixing unitary
+            mix_params = {
+                mix_circ.beta: beta,
+            }
+            mix_instruction = mix_circ.to_instruction(mix_params)
+            super().append(mix_instruction, qreg)
+
+        # measurement
+        super().measure_all()
+        
+    @staticmethod
+    def register_sizes(problem: KnapsackProblem):
+        # number of bits for x register
+        nx = len(problem.values)
+        # number of bits for y register
+        ny = problem.max_weight
+        return nx, ny
+
+
+class QuadQAOA():
+    """
+    QAOA for the Knapsack Problem with quadratic soft constraints.
+    
+    A class for grouping all necessary objects required for the implementation
+    of QAOA for the 0-1 integer Knapsack Problem as described in Roch et al.:
+    "Cross Entropy Hyperparameter Optimization for Constrained Problem
+    Hamiltonians Applied to QAOA" (2020). The implementation is generalized to
+    work for all suiting instances of the KnapsackProblem class and arbitrary
+    p. 
+    
+    Attributes:
+    problem (KnapsackProblem): the specific instance of the Knapsack Problem
+    circuit (QuadQAOACirc): corresponding QAOA circuit
+    
+    Methods:
+    objective_func: the specific objective function for this soft constraint
+        approach.
+    counts_to_choices: 
+    """
+    def __init__(self, problem: KnapsackProblem, p: int):
+        self.problem = problem
+        self.circuit = QuadQAOACirc(problem, p)
+        
+    def objective_func(self, bitstring: str, A: float, B: float):
+        """
+        Computes an objective function for the knapsack problem with quadratic soft constraints.
+        """
+        bits = np.array(list(map(int, list(bitstring))))[::-1]
+        xbits = np.array(bits[:self.circuit.nx])
+        ybits = np.array(bits[self.circuit.nx:])
+        penalty = (A * (1 - sum(ybits))**2
+                    + A * (np.arange(1, self.circuit.ny+1).dot(ybits) - xbits.dot(self.problem.weights))**2)
+        value = B * xbits.dot(self.problem.values)
+        return penalty - value
+    
+    def counts_to_choices(self, counts):
+        choices = {}
+        for bitstring, count in counts.items():
+            choice = bitstring[self.circuit.ny:]
+            if not choice in choices.keys():
+                choices[choice] = count
+            else:
+                choices[choice] += count
+        return choices
+
+
+##############################################################################
+# Soft Constraint: Linear Penalty
+##############################################################################
 
 
 class PenaltyDephaser(QuantumCircuit):
@@ -801,11 +1126,6 @@ class QuantumWalkQAOA:
 
 
 ##############################################################################
-# Hard Constraint: Heuristic Mixer
-##############################################################################
-
-
-##############################################################################
 # Functions
 ##############################################################################
 
@@ -823,9 +1143,7 @@ def average(counts: dict, objective_func):
         sum_count += count
     return avg/sum_count
 
-def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit,
-                     variable_parameters: list, fixed_parameters: dict = None,
-                     backend = None, shots = 512, **kwargs):
+def simulate_circuit(parameter_values, transpiled_circuit: QuantumCircuit, variable_parameters: list, fixed_parameters: dict = None, backend = None, shots = 512, **kwargs):
     # ensure this is a valid dict
     if fixed_parameters is None:
         fixed_parameters = {}
