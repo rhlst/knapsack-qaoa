@@ -415,11 +415,43 @@ class WeightCalculator(QuantumCircuit):
 
 
 class LTChecker(QuantumCircuit):
-    """QuantumCircuit to toggle flag qubit if (weight < 2^c)
+    """
+    Circuit for checking if the number in a register is less than 2^c.
     
-    Assume c < n."""
+    An implementation of a circuit described in de la Grand'rive and
+    Hullo: "Knapsack Problem variants of QAOA for battery revenue
+    optimisation" (2019).
+    
+    The circuit takes a quantum register of n qubits storing some binary
+    number x and toggles a flag qubit if x is less than 2^c, where c
+    is a non-negative integer. For this a carry register of
+    size n-1 is required. It is assumed that c < n. If this is not the case,
+    weird things might happen. This class also contains a reversed version of
+    the circuit for uncomputing.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qweight: the register which contains the number (n qubits)
+    qcarry: auxillary register for size checking (n-1 qubits)
+    qflag: flag qubit for storing the result (1 qubit)
+    """
 
     def __init__(self, n, c, uncompute=False):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        n (int): the size of the register for storing the number
+        c (int): the exponent of the number with which the comparison should
+            take place (compares with 2^c)
+        
+        Keyword Arguments:
+        uncompute (bool): whether or not you want the reversed version of the
+            circuit for uncomputing (default: False, i.e. regular version of
+            the circuit)
+        """
         qweight = QuantumRegister(n,  name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag = QuantumRegister(1, name="flag")
@@ -434,6 +466,17 @@ class LTChecker(QuantumCircuit):
             self.build_regular(n, c, *registers)
         
     def build_regular(self, n, c, qweight, qcarry, qflag):
+        """
+        Build the circuit in regular order.
+        
+        Arguments:
+        n (int): the size of the register in which the number is stored
+        c (int): the exponent of the number with which the comparison should
+            take place (compares with 2^c)
+        qweight (QuantumRegister): register for number
+        qcarry (QuantumRegister): auxillary register for comparison
+        qflag (QuantumRegister): flag register for result
+        """
         super().x(qweight[c:])
 
         if c == n - 1:
@@ -455,7 +498,18 @@ class LTChecker(QuantumCircuit):
         
         super().x(qweight[c:])
             
-    def build_uncompute(self, n, c, qweight, qcarry, qflag):    
+    def build_uncompute(self, n, c, qweight, qcarry, qflag):
+        """
+        Build the circuit in reversed order for uncomputing.
+        
+        Arguments:
+        n (int): the size of the register in which the number is stored
+        c (int): the exponent of the number with which the comparison should
+            take place (compares with 2^c)
+        qweight (QuantumRegister): register for number
+        qcarry (QuantumRegister): auxillary register for comparison
+        qflag (QuantumRegister): flag register for result
+        """
         super().x(qweight[c:])
         
         if c == n - 1:
@@ -723,12 +777,24 @@ class QuadQAOA():
     counts_to_choices: 
     """
     def __init__(self, problem: KnapsackProblem, p: int):
+        """
+        Create a QAOA circuit for the given problem.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        """
         self.problem = problem
         self.circuit = QuadQAOACirc(problem, p)
         
     def objective_func(self, bitstring: str, A: float, B: float):
         """
-        Computes an objective function for the knapsack problem with quadratic soft constraints.
+        Compute an objective function for the knapsack problem with quadratic soft constraints.
         """
         bits = np.array(list(map(int, list(bitstring))))[::-1]
         xbits = np.array(bits[:self.circuit.nx])
@@ -755,9 +821,35 @@ class QuadQAOA():
 
 
 class PenaltyDephaser(QuantumCircuit):
-    """QuantumCircuit for penalty dephasing"""
+    """
+    Circuit for applying phase corresponding to weight penalty.
+    
+    An implementation of the penalty dephasing circuit described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019).
+    
+    The circuit takes a quantum register of n qubits storing the weight of the
+    item choice (to which a constant offset has been added) and a flag qubit.
+    If the flag qubit is set, a phase corresponding to the penalty described
+    in above mentioned paper is applied.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qweight: weight of the item choice (plus constant) (n qubits)
+    qflag: flag qubit controlling the circuit (1 qubit)
+    """
     
     def __init__(self, n, c):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        n (int): the size of the register for storing the number
+        c (int): the exponent of the number with which the weight comparison
+            should has taken place (comparison with 2^c)
+        """
         qweight = QuantumRegister(n, name="weight")
         qflag = QuantumRegister(1, name="flag")
         
@@ -773,9 +865,30 @@ class PenaltyDephaser(QuantumCircuit):
 
 
 class ValueDephaser(QuantumCircuit):
-    """QuantumCircuit to dephase value"""
+    """
+    Circuit for applying phase corresponding to value of item choice.
+    
+    An implementation of the value dephasing circuit described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019).
+    
+    The circuit takes a quantum register of N qubits storing the item choice.
+    A phase corresponding to the value of the item choice is applied.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qchoices: the item choices (N qubits)
+    """
     
     def __init__(self, values):
+        """
+        Initialize the circuit.
+        
+        Arguments:
+        values (list): the values of the items in the knapsack problem
+        """
         N = len(values)
         qchoices = QuantumRegister(N)
         super().__init__(qchoices, name="Dephase Value")
@@ -785,9 +898,41 @@ class ValueDephaser(QuantumCircuit):
 
 
 class LinPhaseCirc(QuantumCircuit):
-    """Phase seperation Circuit for linear penalty"""
+    """
+    Phase seperation circuit for Knapsack QAOA with linear soft constraints.
+    
+    An implementation of the phase seperation circuit described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qchoices: choice of items (N qubits)
+    qweight: weight of item choice (n qubits)
+    qcarry: auxillary register for e.g. addition (n-1 qubits)
+    qflag: flag qubit signalling violation of constraints (1 qubit)
+    
+    Attributes:
+    alpha (Parameter): prefactor of penalty term in the objective function
+    gamma (Parameter): phase seperation angle
+    """
 
     def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -825,9 +970,37 @@ class LinPhaseCirc(QuantumCircuit):
 
 
 class LinMixCirc(QuantumCircuit):
-    """Mixer circuit for Knapsack QAOA with linear soft constraints."""
+    """
+    Mixing circuit for Knapsack QAOA with linear soft constraints.
+    
+    An implementation of the mixing circuit described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    q: choice of items (N qubits)
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    """
     
     def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
         # create registers
         q = QuantumRegister(problem.N)
         # create circuit
@@ -842,10 +1015,45 @@ class LinMixCirc(QuantumCircuit):
 
 class LinQAOACirc(QuantumCircuit):
     """
-    QAOA Circuit for Knapsack Problem with quadratic soft constraints.
+    QAOA Circuit for Knapsack Problem with linear soft constraints.
+    
+    An implementation of the QAOA circuit described in de la Grand'rive and
+    Hullo: "Knapsack Problem variants of QAOA for battery revenue
+    optimisation" (2019). The implementation is generalized to work for all
+    instances of the KnapsackProblem class and arbitrary p.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qchoices: choice of items (N qubits)
+    qweight: weight of item choice (n qubits)
+    qcarry: auxillary register for e.g. addition (n-1 qubits)
+    qflag: flag qubit signalling violation of constraints (1 qubit)
+    
+    Attributes:
+    alpha (Parameter): prefactor of penalty term in the objective function
+    beta (Parameter): mixing angle
+    gamma (Parameter): phase seperation angle
+    p (int): the number of times that phase seperation and mixing circuit are
+        supposed to be applied
     """
     
     def __init__(self, problem: KnapsackProblem, p: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -898,12 +1106,44 @@ class LinQAOACirc(QuantumCircuit):
 
 
 class LinQAOA():
+    """
+    QAOA for the Knapsack Problem with linear soft constraints.
+    
+    A class for grouping all necessary objects required for the implementation
+    of QAOA for the 0-1 integer Knapsack Problem as described in de la
+    Grand'rive and Hullo: "Knapsack Problem variants of QAOA for battery
+    revenue optimisation" (2019). The implementation is generalized to work
+    for all suiting instances of the KnapsackProblem class and arbitrary p. 
+    
+    Attributes:
+    problem (KnapsackProblem): the specific instance of the Knapsack Problem
+    circuit (QuadQAOACirc): corresponding QAOA circuit
+    
+    Methods:
+    objective_func: the specific objective function for this soft constraint
+        approach.
+    """
+    
     def __init__(self, problem: KnapsackProblem, p: int):
+        """
+        Create a QAOA circuit for the given problem.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        """
         self.problem = problem
         self.circuit = LinQAOACirc(problem, p)
         
     def objective_func(self, bitstring: str, alpha: float):
-        """Computes an objective function for the knapsack problem with linear soft constraints."""
+        """
+        Compute an objective function for the knapsack problem with linear soft constraints.
+        """
         bits = np.array(list(map(int, list(bitstring))))[::-1]
         choices = np.array(bits[:self.problem.N])
         weight = choices.dot(self.problem.weights)
@@ -1028,7 +1268,45 @@ class SingleQubitQuantumWalk(QuantumCircuit):
         
         
 class QuantumWalkMixer(QuantumCircuit):
+    """
+    Mixing circuit for Knapsack QAOA with hard constraints.
+    
+    An implementation of the mixing circuit described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: possible choices of items (N qubits)
+    qy: auxillary register for mixing (N qubits)
+    qweight: auxillary register for storing weights of item choices (n qubits)
+    qcarry: auxillary register e.g. for addition (n-1 qubits)
+    qflag_x: indicate whether choice in qx is valid (1 qubit)
+    qflag_neighbor: indicate whether j-th neighbor of choice in qx is valid
+        (1 qubit)
+    qflag_both: indicate whether both choice in qx and its j-th neigbor are
+        valid (1 qubit)
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    """
     def __init__(self, problem: KnapsackProblem, m: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        m (int): degree of trotterization
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1056,7 +1334,37 @@ class QuantumWalkMixer(QuantumCircuit):
                 
                 
 class QuantumWalkPhaseCirc(QuantumCircuit):
+    """
+    Phase seperation circuit for Knapsack QAOA with hard constraints.
+    
+    An implementation of the phase seperation circuit described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qchoices: choice of items (N qubits)
+    
+    Attributes:
+    gamma (Parameter): phase seperation angle
+    """
+    
     def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
         qchoices = QuantumRegister(problem.N, name="choices")
         super().__init__(qchoices, name="UPhase")
         self.gamma = Parameter("gamma")
@@ -1067,7 +1375,51 @@ class QuantumWalkPhaseCirc(QuantumCircuit):
         
         
 class QuantumWalkQAOACirc(QuantumCircuit):
+    """
+    QAOA Circuit for Knapsack Problem with hard constraints.
+    
+    An implementation of the QAOA circuit described in Marsh and Wang: "A
+    quantum walk-assisted approximate algorithm for bounded NP optimisation
+    problems" (2019). The implementation is generalized to work for all
+    instances of the KnapsackProblem class and arbitrary p and m.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: possible choices of items (N qubits)
+    qy: auxillary register for mixing (N qubits)
+    qweight: auxillary register for storing weights of item choices (n qubits)
+    qcarry: auxillary register e.g. for addition (n-1 qubits)
+    qflag_x: indicate whether choice in qx is valid (1 qubit)
+    qflag_neighbor: indicate whether j-th neighbor of choice in qx is valid
+        (1 qubit)
+    qflag_both: indicate whether both choice in qx and its j-th neigbor are
+        valid (1 qubit)
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    gamma (Parameter): phase seperation angle
+    p (int): the number of times that phase seperation and mixing circuit are
+        supposed to be applied
+    """
+    
     def __init__(self, problem: KnapsackProblem, p: int, m: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        m (int): the degree of trotterization for the mixing operator
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1113,7 +1465,38 @@ class QuantumWalkQAOACirc(QuantumCircuit):
         
         
 class QuantumWalkQAOA:
+    """
+    QAOA for the Knapsack Problem with hard constraints.
+    
+    A class for grouping all necessary objects required for the implementation
+    of QAOA for the 0-1 integer Knapsack Problem as described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized to work
+    for all suiting instances of the KnapsackProblem class and arbitrary p. 
+    
+    Attributes:
+    problem (KnapsackProblem): the specific instance of the Knapsack Problem
+    circuit (QuadQAOACirc): corresponding QAOA circuit
+    
+    Methods:
+    objective_func: the specific objective function for this soft constraint
+        approach.
+    """
+    
     def __init__(self, problem: KnapsackProblem, p: int, m:int):
+        """
+        Create a QAOA circuit for the given problem.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        p (int): the number of times that phase seperation and mixing circuit
+            are supposed to be applied
+        m (int): the degree of trotterization for the mixing operator
+        """
         self.problem = problem
         self.circuit = QuantumWalkQAOACirc(problem, p, m)
         
