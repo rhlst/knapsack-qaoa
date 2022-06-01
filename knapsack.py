@@ -1158,7 +1158,39 @@ class LinQAOA():
 
 
 class FeasibilityOracle(QuantumCircuit):
+    """
+    Circuit for checking feasibility of an item choice. 
+    
+    An implementation of the feasibility oracle described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    The circuit takes an N qubit register representing an item choice,
+    checks whether the constraints are satisfied, i.e. the item choice is
+    considered feasible, and toggles a flag qubit accordingly.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qchoices: choice of items (N qubits)
+    qweight: auxillary register for storing weights of item choices (n qubits)
+    qcarry: auxillary register e.g. for addition (n-1 qubits)
+    qflag: indicate whether choice in qx is valid (1 qubit)
+    """
+    
     def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1181,7 +1213,46 @@ class FeasibilityOracle(QuantumCircuit):
         
 
 class Vj(QuantumCircuit):
+    """
+    Circuit creating j-th neighbor of item choice and checking feasibillity. 
+    
+    An implementation of the V_j operator described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    The circuit takes an N qubit register (qx) representing an item choice,
+    creates the j-th neighbor of this choice and stores it in qy, checks
+    for both of them whether they are feasible item choices, and toggles
+    flag qubits accordingly.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit.
+    
+    Registers:
+    qx: possible choices of items (N qubits)
+    qy: auxillary register for mixing (N qubits)
+    qweight: auxillary register for storing weights of item choices (n qubits)
+    qcarry: auxillary register e.g. for addition (n-1 qubits)
+    qflag_x: indicate whether choice in qx is valid (1 qubit)
+    qflag_neighbor: indicate whether j-th neighbor of choice in qx is valid
+        (1 qubit)
+    qflag_both: indicate whether both the choice in qx and its j-th neigbor
+        are valid (1 qubit)
+    """
+    
     def __init__(self, problem: KnapsackProblem, j: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        j (int): number of the neighbor
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1213,7 +1284,41 @@ class Vj(QuantumCircuit):
 
 
 class ExpBetaS(QuantumCircuit):
+    """
+    Circuit for N-qubit swap mixing. 
+    
+    An implementation of the N-qubit swap mixer described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: possible choices of items (N qubits)
+    qy: auxillary register for mixing (N qubits)
+    qhelper: ancillary qubit used for controlling the mixing (1 qubit)
+    qflag_both: indicate whether both the choice in qx and its j-th neigbor are
+        valid (1 qubit)
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    """
+    
     def __init__(self, problem: KnapsackProblem):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1240,7 +1345,46 @@ class ExpBetaS(QuantumCircuit):
         
 
 class SingleQubitQuantumWalk(QuantumCircuit):
+    """
+    Circuit for single qubit quantum walk mixing. 
+    
+    An implementation of the single qubit mixer described in Marsh and
+    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
+    optimisation problems" (2019). The implementation is generalized
+    to work for all instances of the KnapsackProblem class.
+    
+    Inherits from the QuantumCircuit class from qiskit and the interface
+    remains mainly unchanged; only initializes the circuit and adds free
+    circuit parameters as attributes. Those are of type
+    qiskit.circuit.Parameter and noted as Parameter in the following.
+    
+    Registers:
+    qx: possible choices of items (N qubits)
+    qy: auxillary register for mixing (N qubits)
+    qweight: auxillary register for storing weights of item choices (n qubits)
+    qcarry: auxillary register e.g. for addition (n-1 qubits)
+    qflag_x: indicate whether choice in qx is valid (1 qubit)
+    qflag_neighbor: indicate whether j-th neighbor of choice in qx is valid
+        (1 qubit)
+    qflag_both: indicate whether both choice in qx and its j-th neigbor are
+        valid (1 qubit)
+    
+    Attributes:
+    beta (Parameter): mixing angle
+    """
+    
     def __init__(self, problem: KnapsackProblem, j: int):
+        """
+        Initialize the circuit.
+        
+        The implementation is generalized, s.t. it will work for any instances
+        of a 0-1 integer Knapsack Problem.
+        
+        Arguments:
+        problem (KnapsackProblem): the instance of the knapsack problem that
+            should be solved.
+        j (int): number of the qubit which should be mixed
+        """
         n = math.floor(math.log2(problem.total_weight)) + 1
         c = math.floor(math.log2(problem.max_weight)) + 1
         if c == n:
@@ -1295,6 +1439,7 @@ class QuantumWalkMixer(QuantumCircuit):
     Attributes:
     beta (Parameter): mixing angle
     """
+    
     def __init__(self, problem: KnapsackProblem, m: int):
         """
         Initialize the circuit.
