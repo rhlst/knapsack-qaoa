@@ -1212,146 +1212,15 @@ class FeasibilityOracle(QuantumCircuit):
         super().append(WeightCalculator(n, problem.weights, uncompute=True).to_instruction(), [*qchoices, *qweight, *qcarry])
         
 
-class Vj(QuantumCircuit):
-    """
-    Circuit creating j-th neighbor of item choice and checking feasibillity. 
-    
-    An implementation of the V_j operator described in Marsh and
-    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
-    optimisation problems" (2019). The implementation is generalized
-    to work for all instances of the KnapsackProblem class.
-    
-    The circuit takes an N qubit register (qx) representing an item choice,
-    creates the j-th neighbor of this choice and stores it in qy, checks
-    for both of them whether they are feasible item choices, and toggles
-    flag qubits accordingly.
-    
-    Inherits from the QuantumCircuit class from qiskit and the interface
-    remains mainly unchanged; only initializes the circuit.
-    
-    Registers:
-    qx: possible choices of items (N qubits)
-    qy: auxillary register for mixing (N qubits)
-    qweight: auxillary register for storing weights of item choices (n qubits)
-    qcarry: auxillary register e.g. for addition (n-1 qubits)
-    qflag_x: indicate whether choice in qx is valid (1 qubit)
-    qflag_neighbor: indicate whether j-th neighbor of choice in qx is valid
-        (1 qubit)
-    qflag_both: indicate whether both the choice in qx and its j-th neigbor
-        are valid (1 qubit)
-    """
-    
-    def __init__(self, problem: KnapsackProblem, j: int):
-        """
-        Initialize the circuit.
-        
-        The implementation is generalized, s.t. it will work for any instances
-        of a 0-1 integer Knapsack Problem.
-        
-        Arguments:
-        problem (KnapsackProblem): the instance of the knapsack problem that
-            should be solved.
-        j (int): number of the neighbor
-        """
-        n = math.floor(math.log2(problem.total_weight)) + 1
-        c = math.floor(math.log2(problem.max_weight)) + 1
-        if c == n:
-            n += 1
-
-        qx = QuantumRegister(problem.N, name="x")
-        qy = QuantumRegister(problem.N, name="y")
-        qweight = QuantumRegister(n, name="weight")
-        qcarry = QuantumRegister(n-1, name="carry")
-        qflag_x = QuantumRegister(1, name="v(x)")
-        qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
-        qflag_both = QuantumRegister(1, name="v_j(x)")
-        
-        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
-        
-        super().__init__(*registers, name=f"V{j}")
-        
-        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
-        super().x(qx[j])
-        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
-        
-        super().ccx(qflag_x, qflag_neighbor, qflag_both)
-        for xqubit, yqubit in zip(qx, qy):
-            super().cx(xqubit, yqubit)
-        
-        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
-        super().x(qx[j])
-        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
-
-
-class ExpBetaS(QuantumCircuit):
-    """
-    Circuit for N-qubit swap mixing. 
-    
-    An implementation of the N-qubit swap mixer described in Marsh and
-    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
-    optimisation problems" (2019). The implementation is generalized
-    to work for all instances of the KnapsackProblem class.
-    
-    Inherits from the QuantumCircuit class from qiskit and the interface
-    remains mainly unchanged; only initializes the circuit and adds free
-    circuit parameters as attributes. Those are of type
-    qiskit.circuit.Parameter and noted as Parameter in the following.
-    
-    Registers:
-    qx: possible choices of items (N qubits)
-    qy: auxillary register for mixing (N qubits)
-    qhelper: ancillary qubit used for controlling the mixing (1 qubit)
-    qflag_both: indicate whether both the choice in qx and its j-th neigbor are
-        valid (1 qubit)
-    
-    Attributes:
-    beta (Parameter): mixing angle
-    """
-    
-    def __init__(self, problem: KnapsackProblem):
-        """
-        Initialize the circuit.
-        
-        The implementation is generalized, s.t. it will work for any instances
-        of a 0-1 integer Knapsack Problem.
-        
-        Arguments:
-        problem (KnapsackProblem): the instance of the knapsack problem that
-            should be solved.
-        """
-        n = math.floor(math.log2(problem.total_weight)) + 1
-        c = math.floor(math.log2(problem.max_weight)) + 1
-        if c == n:
-            n += 1
-
-        qx = QuantumRegister(problem.N, name="x")
-        qy = QuantumRegister(problem.N, name="y")
-        qhelper = QuantumRegister(1, name="helper")
-        qflag_both = QuantumRegister(1, name="v_j(x)")
-        
-        registers = [qx, qy, qhelper, qflag_both]
-        
-        super().__init__(*registers, name=f"ExpBetaS")
-        
-        self.beta = Parameter("beta")
-        
-        super().h(qhelper)
-        for xqubit, yqubit in zip(qx, qy):
-            super().cswap(qhelper, xqubit, yqubit)
-        super().crx(self.beta, qflag_both, qhelper)
-        for xqubit, yqubit in zip(qx, qy):
-            super().cswap(qhelper, xqubit, yqubit)
-        super().h(qhelper)
-        
-
 class SingleQubitQuantumWalk(QuantumCircuit):
     """
     Circuit for single qubit quantum walk mixing. 
     
-    An implementation of the single qubit mixer described in Marsh and
-    Wang: "A quantum walk-assisted approximate algorithm for bounded NP
-    optimisation problems" (2019). The implementation is generalized
-    to work for all instances of the KnapsackProblem class.
+    An implementation of an improved version of the single qubit mixer
+    described in Marsh and Wang: "A quantum walk-assisted approximate
+    algorithm for bounded NP optimisation problems" (2019). The
+    implementation is generalized to work for all instances of the
+    KnapsackProblem class.
     
     Inherits from the QuantumCircuit class from qiskit and the interface
     remains mainly unchanged; only initializes the circuit and adds free
@@ -1360,7 +1229,6 @@ class SingleQubitQuantumWalk(QuantumCircuit):
     
     Registers:
     qx: possible choices of items (N qubits)
-    qy: auxillary register for mixing (N qubits)
     qweight: auxillary register for storing weights of item choices (n qubits)
     qcarry: auxillary register e.g. for addition (n-1 qubits)
     qflag_x: indicate whether choice in qx is valid (1 qubit)
@@ -1391,24 +1259,32 @@ class SingleQubitQuantumWalk(QuantumCircuit):
             n += 1
 
         qx = QuantumRegister(problem.N, name="x")
-        qy = QuantumRegister(problem.N, name="y")
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag_x = QuantumRegister(1, name="v(x)")
         qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
         qflag_both = QuantumRegister(1, name="v_j(x)")
         
-        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
-        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        registers = [qx, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
         
         super().__init__(*registers, name=f"SingleQubitQuantumWalk_{j=}")
         
         self.beta = Parameter("beta")
         
-        super().append(Vj(problem, j).to_instruction(), qubits)
-        exp_s = ExpBetaS(problem)
-        super().append(exp_s.to_instruction({exp_s.beta: self.beta}), [*qx, *qy, qflag_x, qflag_both])
-        super().append(Vj(problem, j).to_instruction(), qubits)
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
+        super().x(qx[j])
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
+        super().x(qx[j])
+        super().ccx(qflag_x, qflag_neighbor, qflag_both)
+        
+        super().crx(2 * self.beta, qflag_both, qx[j])
+        
+        super().ccx(qflag_x, qflag_neighbor, qflag_both)
+        super().x(qx[j])
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_neighbor])
+        super().x(qx[j])
+        super().append(FeasibilityOracle(problem).to_instruction(), [*qx, *qweight, *qcarry, qflag_x])
         
         
 class QuantumWalkMixer(QuantumCircuit):
@@ -1427,7 +1303,6 @@ class QuantumWalkMixer(QuantumCircuit):
     
     Registers:
     qx: possible choices of items (N qubits)
-    qy: auxillary register for mixing (N qubits)
     qweight: auxillary register for storing weights of item choices (n qubits)
     qcarry: auxillary register e.g. for addition (n-1 qubits)
     qflag_x: indicate whether choice in qx is valid (1 qubit)
@@ -1458,15 +1333,14 @@ class QuantumWalkMixer(QuantumCircuit):
             n += 1
 
         qx = QuantumRegister(problem.N, name="x")
-        qy = QuantumRegister(problem.N, name="y")
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag_x = QuantumRegister(1, name="v(x)")
         qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
         qflag_both = QuantumRegister(1, name="v_j(x)")
         
-        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
-        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        registers = [qx, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
         
         super().__init__(*registers, name=f"QuantumWalkMixer_{m=}")
         
@@ -1535,7 +1409,6 @@ class QuantumWalkQAOACirc(QuantumCircuit):
     
     Registers:
     qx: possible choices of items (N qubits)
-    qy: auxillary register for mixing (N qubits)
     qweight: auxillary register for storing weights of item choices (n qubits)
     qcarry: auxillary register e.g. for addition (n-1 qubits)
     qflag_x: indicate whether choice in qx is valid (1 qubit)
@@ -1571,15 +1444,14 @@ class QuantumWalkQAOACirc(QuantumCircuit):
             n += 1
 
         qx = QuantumRegister(problem.N, name="x")
-        qy = QuantumRegister(problem.N, name="y")
         qweight = QuantumRegister(n, name="weight")
         qcarry = QuantumRegister(n-1, name="carry")
         qflag_x = QuantumRegister(1, name="v(x)")
         qflag_neighbor = QuantumRegister(1, name="v(n_j(x))")
         qflag_both = QuantumRegister(1, name="v_j(x)")
         
-        registers = [qx, qy, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
-        qubits = [*qx, *qy, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
+        registers = [qx, qweight, qcarry, qflag_x, qflag_neighbor, qflag_both]
+        qubits = [*qx, *qweight, *qcarry, qflag_x, qflag_neighbor, qflag_both]
         
         super().__init__(*registers, name=f"QuantumWalkMixer_{m=}")
         
@@ -1607,8 +1479,8 @@ class QuantumWalkQAOACirc(QuantumCircuit):
 
         # measurement
         super().measure_all()
-        
-        
+
+
 class QuantumWalkQAOA:
     """
     QAOA for the Knapsack Problem with hard constraints.
