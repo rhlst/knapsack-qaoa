@@ -854,13 +854,13 @@ class PenaltyDephaser(QuantumCircuit):
         
         super().__init__(qweight, qflag, name="Dephase Penalty")
 
-        self.alpha = Parameter("alpha")
+        self.a = Parameter("a")
         self.gamma = Parameter("gamma")
         
         for idx, qubit in enumerate(qweight):
-            super().cp(2**idx * self.alpha * self.gamma, qflag, qubit)
+            super().cp(2**idx * self.a * self.gamma, qflag, qubit)
     
-        super().p(-2**c * self.alpha * self.gamma, qflag)
+        super().p(-2**c * self.a * self.gamma, qflag)
 
 
 class ValueDephaser(QuantumCircuit):
@@ -917,7 +917,7 @@ class LinPhaseCirc(QuantumCircuit):
     qflag: flag qubit signalling violation of constraints (1 qubit)
     
     Attributes:
-    alpha (Parameter): prefactor of penalty term in the objective function
+    a (Parameter): prefactor of penalty term in the objective function
     gamma (Parameter): phase seperation angle
     """
 
@@ -946,7 +946,7 @@ class LinPhaseCirc(QuantumCircuit):
         
         super().__init__(*registers, name="UPhase")
 
-        self.alpha = Parameter("alpha")
+        self.a = Parameter("a")
         self.gamma = Parameter("gamma")
 
         super().x(qflag)
@@ -960,7 +960,7 @@ class LinPhaseCirc(QuantumCircuit):
         super().append(LTChecker(n, c).to_instruction(), [*qweight, *qcarry, qflag])
 
         penaltycirc = PenaltyDephaser(n, c)
-        penalty_instruction = penaltycirc.to_instruction({penaltycirc.alpha: self.alpha, penaltycirc.gamma: self.gamma})
+        penalty_instruction = penaltycirc.to_instruction({penaltycirc.a: self.a, penaltycirc.gamma: self.gamma})
         super().append(penalty_instruction, [*qweight, qflag])
 
         super().append(LTChecker(n, c, uncompute=True).to_instruction(), [*qweight, *qcarry, qflag])
@@ -1033,7 +1033,7 @@ class LinQAOACirc(QuantumCircuit):
     qflag: flag qubit signalling violation of constraints (1 qubit)
     
     Attributes:
-    alpha (Parameter): prefactor of penalty term in the objective function
+    a (Parameter): prefactor of penalty term in the objective function
     beta (Parameter): mixing angle
     gamma (Parameter): phase seperation angle
     p (int): the number of times that phase seperation and mixing circuit are
@@ -1078,7 +1078,7 @@ class LinQAOACirc(QuantumCircuit):
         self.betas = [Parameter(f"beta{i}") for i in range(p)]
         self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
         
-        self.alpha = Parameter("alpha")
+        self.a = Parameter("a")
 
         # initialize
         super().h(qchoices)
@@ -1088,7 +1088,7 @@ class LinQAOACirc(QuantumCircuit):
             # application of phase seperation unitary
             phase_params = {
                 phase_circ.gamma: gamma,
-                phase_circ.alpha: self.alpha,
+                phase_circ.a: self.a,
             }
             phase_instruction = phase_circ.to_instruction(phase_params)
             super().append(phase_instruction, qubits)
@@ -1139,14 +1139,14 @@ class LinQAOA():
         self.problem = problem
         self.circuit = LinQAOACirc(problem, p)
         
-    def objective_func(self, bitstring: str, alpha: float):
+    def objective_func(self, bitstring: str, a: float):
         """
         Compute an objective function for the knapsack problem with linear soft constraints.
         """
         bits = np.array(list(map(int, list(bitstring))))[::-1]
         choices = np.array(bits[:self.problem.N])
         weight = choices.dot(self.problem.weights)
-        penalty = - alpha * (weight - self.problem.max_weight) if weight > self.problem.max_weight else 0
+        penalty = - a * (weight - self.problem.max_weight) if weight > self.problem.max_weight else 0
         value = choices.dot(self.problem.values)
         return value + penalty
 
