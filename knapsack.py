@@ -557,8 +557,8 @@ class QuadPhaseCirc(QuantumCircuit):
     
     Attributes:
     gamma (Parameter): phase seperation angle
-    A (Parameter): prefactor of penalty term in the objective function
-    B (Parameter): prefactor of the value term in the objective function
+    a (Parameter): prefactor of the value term in the objective function
+    b (Parameter): prefactor of the penalty term in the objective function
     """
     
     def __init__(self, problem: KnapsackProblem):
@@ -581,41 +581,40 @@ class QuadPhaseCirc(QuantumCircuit):
         
         # parameters for this circuit
         self.gamma = Parameter("gamma")
-        self.A = Parameter("A")
-        self.B = Parameter("B")
+        self.a = Parameter("a")
+        self.b = Parameter("b")
 
         # Single-qubit rotations on x register
         for idx, (value, weight) in enumerate(zip(problem.values, problem.weights)):
-            angle = (self.A / 2 * (problem.total_weight - (problem.max_weight**2 - problem.max_weight) / 2 * weight)
-                        - self.B * value / 2) * self.gamma
-            super().rz(2 * angle, qx[idx])
+            angle = self.gamma * (self.a * value - self.b * (problem.total_weight - (problem.max_weight**2 + problem.max_weight) / 2) * weight)
+            super().rz(angle, qx[idx])
 
         # Single-qubit rotations on y register
         for idx in range(ny):
-            angle = (problem.max_weight / 2 - 1
-                        + (idx+1) * ((problem.max_weight**2 + problem.max_weight) / 4 - problem.total_weight / 2)) * self.gamma
-            super().rz(2 * angle, qy[idx])
+            angle = - self.gamma * self.beta * (problem.max_weight - 2
+                        + (idx+1) * ((problem.max_weight**2 + problem.max_weight) / 2 - problem.total_weight))
+            super().rz(angle, qy[idx])
 
         super().barrier()
 
         # Two-qubit rotations on x register
         for idx1, weight1 in enumerate(problem.weights):
             for idx2, weight2 in enumerate(problem.weights[:idx1]):
-                angle = weight1 * weight2 / 2 * self.gamma
-                super().rzz(2 * angle, qx[idx1], qx[idx2])
+                angle = - self.gamma * self.b * weight1 * weight2
+                super().rzz(angle, qx[idx1], qx[idx2])
 
         # Two-qubit rotations on y register
         for idx1 in range(ny):
             for idx2 in range(idx1):
-                angle = (1 + (idx1 + 1) * (idx2 + 1)) / 2 * self.gamma
-                super().rzz(2 * angle, qy[idx1], qy[idx2])
+                angle = - self.gamma * self.b * (1 + (idx1 + 1) * (idx2 + 1))
+                super().rzz(angle, qy[idx1], qy[idx2])
 
         super().barrier()
 
         # Common x and y register rotations
         for (ix, weight), iy in product(enumerate(problem.weights), range(ny)):
-            angle = - (iy + 1) * weight / 2 * self.gamma
-            super().rzz(2 * angle, qx[ix], qy[iy])
+            angle = self.gamma * self.b * (iy + 1) * weight
+            super().rzz(angle, qx[ix], qy[iy])
 
 
 class QuadMixCirc(QuantumCircuit):
@@ -684,8 +683,8 @@ class QuadQAOACirc(QuantumCircuit):
     Attributes:
     beta (Parameter): mixing angle
     gamma (Parameter): phase seperation angle
-    A (Parameter): prefactor of penalty term in the objective function
-    B (Parameter): prefactor of the value term in the objective function
+    a (Parameter): prefactor of the value term in the objective function
+    b (Parameter): prefactor of the penalty term in the objective function
     p (int): the number of times that phase seperation and mixing circuit are
         supposed to be applied
     """
@@ -718,8 +717,8 @@ class QuadQAOACirc(QuantumCircuit):
 
         self.betas = [Parameter(f"beta{i}") for i in range(p)]
         self.gammas = [Parameter(f"gamma{i}") for i in range(p)]
-        self.A = Parameter("A")
-        self.B = Parameter("B")
+        self.a = Parameter("a")
+        self.b = Parameter("b")
 
         super().__init__(qx, qy)
 
@@ -731,8 +730,8 @@ class QuadQAOACirc(QuantumCircuit):
             # application of phase seperation unitary
             phase_params = {
                 phase_circ.gamma: gamma,
-                phase_circ.A: self.A,
-                phase_circ.B: self.B,
+                phase_circ.a: self.a,
+                phase_circ.b: self.b,
             }
             phase_instruction = phase_circ.to_instruction(phase_params)
             super().append(phase_instruction, qreg)
@@ -792,17 +791,17 @@ class QuadQAOA():
         self.problem = problem
         self.circuit = QuadQAOACirc(problem, p)
         
-    def objective_func(self, bitstring: str, A: float, B: float):
+    def objective_func(self, bitstring: str, a: float, b: float):
         """
         Compute an objective function for the knapsack problem with quadratic soft constraints.
         """
         bits = np.array(list(map(int, list(bitstring))))[::-1]
         xbits = np.array(bits[:self.circuit.nx])
         ybits = np.array(bits[self.circuit.nx:])
-        penalty = (A * (1 - sum(ybits))**2
-                    + A * (np.arange(1, self.circuit.ny+1).dot(ybits) - xbits.dot(self.problem.weights))**2)
-        value = B * xbits.dot(self.problem.values)
-        return penalty - value
+        value = xbits.dot(self.problem.values)
+        penalty = ((1 - sum(ybits))**2
+                  + (np.arange(1, self.circuit.ny+1).dot(ybits) - xbits.dot(self.problem.weights))**2)
+        return a * value - b * penalty
     
     def counts_to_choices(self, counts):
         choices = {}
